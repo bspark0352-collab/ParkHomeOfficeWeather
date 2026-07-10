@@ -973,25 +973,79 @@ function findStartIndex(flat, date, hour){
   return idx === -1 ? 0 : idx;
 }
 
-function buildSparkline(slice){
-  const w = 320, h = 64, pad = 6;
+function buildDetailChart(slice){
+  const W = 340;
+  const marginLeft = 30, marginRight = 12;
+  const plotW = W - marginLeft - marginRight;
+  const n = slice.length;
+  const stepX = plotW / ((n - 1) || 1);
+  const xOf = i => marginLeft + i*stepX;
+
+  /* --- temperature line chart --- */
+  const tempTitleY = 10;
+  const tempTop = 22, tempH = 58;
   const temps = slice.map(s => s.temp);
-  const min = Math.min(...temps), max = Math.max(...temps);
-  const range = (max - min) || 1;
-  const stepX = (w - pad*2) / (slice.length - 1 || 1);
-  const points = temps.map((t, i) => {
-    const x = pad + i*stepX;
-    const y = pad + (1 - (t - min)/range) * (h - pad*2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const path = points.join(' ');
-  const dots = temps.map((t,i)=>{
-    const [x,y] = points[i].split(',');
-    return `<circle cx="${x}" cy="${y}" r="2.4" fill="var(--accent-cool)"></circle>`;
+  const tMin = Math.min(...temps), tMax = Math.max(...temps);
+  const tRange = (tMax - tMin) || 1;
+  const yOfTemp = t => tempTop + (1 - (t - tMin)/tRange) * tempH;
+
+  const tempPointsArr = temps.map((t,i) => `${xOf(i).toFixed(1)},${yOfTemp(t).toFixed(1)}`);
+  const tempPath = tempPointsArr.join(' ');
+  const tempDots = temps.map((t,i)=>
+    `<circle cx="${xOf(i).toFixed(1)}" cy="${yOfTemp(t).toFixed(1)}" r="2.3" fill="var(--accent-cool)"/>`
+  ).join('');
+  const tempValueLabels = temps.map((t,i)=>
+    `<text x="${xOf(i).toFixed(1)}" y="${(yOfTemp(t)-6).toFixed(1)}" font-size="7.5" text-anchor="middle" fill="var(--text-secondary)">${Math.round(t)}°</text>`
+  ).join('');
+  const tempAxisLabels = `
+    <text x="${marginLeft-4}" y="${tempTop+4}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">${Math.round(tMax)}°</text>
+    <text x="${marginLeft-4}" y="${tempTop+tempH}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">${Math.round(tMin)}°</text>`;
+
+  /* --- precipitation probability trend (bars) --- */
+  const precipTitleY = tempTop + tempH + 22;
+  const precipTop = precipTitleY + 8;
+  const precipH = 40;
+  const probs = slice.map(s => (s.prob!==null && s.prob!==undefined) ? s.prob : 0);
+  const barW = Math.max((plotW/n)*0.46, 4);
+  const precipBars = probs.map((p,i)=>{
+    const barH = Math.max((p/100)*precipH, p>0?2:0);
+    const x = xOf(i) - barW/2;
+    const y = precipTop + (precipH - barH);
+    const snow = isSnow(slice[i].code);
+    const color = snow ? 'var(--snow)' : 'var(--rain)';
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${color}" opacity="0.85"/>`;
   }).join('');
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-    <polyline points="${path}" fill="none" stroke="var(--accent-cool)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${dots}
+  const precipValueLabels = probs.map((p,i)=>{
+    if(p <= 0) return '';
+    return `<text x="${xOf(i).toFixed(1)}" y="${(precipTop-4).toFixed(1)}" font-size="7" text-anchor="middle" fill="var(--rain)">${p}%</text>`;
+  }).join('');
+  const precipAxisLabels = `
+    <text x="${marginLeft-4}" y="${precipTop+5}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">100%</text>
+    <text x="${marginLeft-4}" y="${precipTop+precipH}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">0%</text>`;
+
+  /* --- shared x-axis (hour) labels --- */
+  const xAxisY = precipTop + precipH + 14;
+  const skip = n > 8 ? 2 : 1;
+  const xLabels = slice.map((s,i)=>{
+    if(i % skip !== 0 && i !== n-1) return '';
+    return `<text x="${xOf(i).toFixed(1)}" y="${xAxisY}" font-size="7.5" text-anchor="middle" fill="var(--text-tertiary)">${s.hour}시</text>`;
+  }).join('');
+
+  const totalH = xAxisY + 6;
+
+  return `<svg viewBox="0 0 ${W} ${totalH}" width="100%" height="auto">
+    <text x="${marginLeft}" y="${tempTitleY}" font-size="9" font-weight="700" fill="var(--text-secondary)">기온 추세</text>
+    <line x1="${marginLeft}" y1="${tempTop+tempH}" x2="${W-marginRight}" y2="${tempTop+tempH}" stroke="var(--divider)" stroke-width="1"/>
+    <polyline points="${tempPath}" fill="none" stroke="var(--accent-cool)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${tempDots}
+    ${tempValueLabels}
+    ${tempAxisLabels}
+    <text x="${marginLeft}" y="${precipTitleY}" font-size="9" font-weight="700" fill="var(--text-secondary)">강수확률 추세</text>
+    <line x1="${marginLeft}" y1="${precipTop+precipH}" x2="${W-marginRight}" y2="${precipTop+precipH}" stroke="var(--divider)" stroke-width="1"/>
+    ${precipBars}
+    ${precipValueLabels}
+    ${precipAxisLabels}
+    ${xLabels}
   </svg>`;
 }
 
@@ -1033,7 +1087,7 @@ function renderDetail(){
       <div class="sub-label">${subLabel}</div>
     </div>`;
 
-  const spark = `<div class="sparkline-card">${buildSparkline(slice)}</div>`;
+  const spark = `<div class="sparkline-card">${buildDetailChart(slice)}</div>`;
 
   const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
   const nowDateStr = `${nowKST.getFullYear()}-${String(nowKST.getMonth()+1).padStart(2,'0')}-${String(nowKST.getDate()).padStart(2,'0')}`;
