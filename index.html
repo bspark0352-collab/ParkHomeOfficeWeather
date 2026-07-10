@@ -75,6 +75,27 @@
   #refreshBtn:active{ transform:rotate(180deg); }
   #refreshBtn svg{ width:18px; height:18px; }
 
+  .header-right{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .kma-badge{
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    padding:6px 10px;
+    border-radius:999px;
+    background:rgba(11,94,215,0.08);
+    border:1px solid rgba(11,94,215,0.18);
+    color:#0B5ED7;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:-0.01em;
+    white-space:nowrap;
+  }
+  .kma-badge svg{ width:13px; height:13px; flex-shrink:0; }
+
   /* tabs */
   .tabbar{
     display:flex;
@@ -535,11 +556,21 @@
         <h1>출퇴근 날씨</h1>
         <div class="date" id="todayLabel">-</div>
       </div>
-      <button id="refreshBtn" aria-label="새로고침">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
-        </svg>
-      </button>
+      <div class="header-right">
+        <div class="kma-badge" title="기상청 단기예보 데이터를 함께 사용합니다">
+          <svg viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M6.5 10.5c2-2.4 4-3.6 5.5-3.6s3.5 1.2 5.5 3.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M5 14c2.4 2 4.6 3 7 3s4.6-1 7-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <span>기상청</span>
+        </div>
+        <button id="refreshBtn" aria-label="새로고침">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+          </svg>
+        </button>
+      </div>
     </header>
 
     <div class="tabbar">
