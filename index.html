@@ -673,8 +673,8 @@ function timeStrToDec(str){
   return h + (m||0)/60;
 }
 
-const PRECIP_CODES = new Set([51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99]);
-const SNOW_CODES = new Set([56,57,71,73,75,77,85,86]);
+const PRECIP_CODES = new Set([51,53,55,56,57,61,63,65,66,67,68,69,71,73,75,77,80,81,82,85,86,95,96,99]);
+const SNOW_CODES = new Set([56,57,68,69,71,73,75,77,85,86]);
 
 function weatherIcon(code, isDay=true){
   if(code===0) return isDay? '☀️':'🌙';
@@ -685,6 +685,7 @@ function weatherIcon(code, isDay=true){
   if([51,53,55].includes(code)) return '🌦️';
   if([56,57].includes(code)) return '🌨️';
   if([61,63,65,66,67].includes(code)) return '🌧️';
+  if([68,69].includes(code)) return '🌨️';
   if([71,73,75,77].includes(code)) return '❄️';
   if([80,81,82].includes(code)) return '🌧️';
   if([85,86].includes(code)) return '🌨️';
@@ -705,6 +706,8 @@ function weatherStatusText(code){
   if([56,57].includes(code)) return '어는이슬비';
   if([61,63,65].includes(code)) return '비';
   if([66,67].includes(code)) return '어는비';
+  if(code===68) return '비/눈';
+  if(code===69) return '빗방울눈날림';
   if([71,73,75].includes(code)) return '눈';
   if(code===77) return '눈날림';
   if([80,81,82].includes(code)) return '소나기';
@@ -730,6 +733,34 @@ async function fetchLocation(loc){
   const res = await fetch(url);
   if(!res.ok) throw new Error('weather fetch failed');
   return res.json();
+}
+
+// 기상청(KMA) 단기예보 - 서버리스 함수(/api/kma)를 통해 조회한다.
+// 아직 배포/환경변수 설정 전이거나 실패하면 조용히 null을 반환해서
+// Open-Meteo 데이터만으로도 앱이 정상 동작하도록 한다.
+async function fetchKma(loc){
+  try{
+    const res = await fetch(`/api/kma?lat=${loc.lat}&lon=${loc.lon}`);
+    if(!res.ok) return null;
+    const data = await res.json();
+    if(!data || data.error || !Array.isArray(data.hourly)) return null;
+    return data;
+  }catch(e){ return null; }
+}
+
+// Open-Meteo 기반 dateMap에 기상청 단기예보 값을 덮어씌운다 (있는 시간대만).
+// 기상청 단기예보는 최대 약 3일치이므로, 그 이후 날짜/이미 지난 어제 데이터는
+// 그대로 Open-Meteo 값이 유지된다.
+function mergeKmaIntoDateMap(dateMap, kmaHourly){
+  if(!kmaHourly || kmaHourly.length === 0) return;
+  kmaHourly.forEach(kh=>{
+    if(!dateMap[kh.date]) dateMap[kh.date] = [];
+    const arr = dateMap[kh.date];
+    const idx = arr.findIndex(h => h.hour === kh.hour);
+    const merged = { hour: kh.hour, temp: kh.temp, precip: kh.precip, code: kh.code, isDay: kh.isDay, prob: kh.prob, source: 'kma' };
+    if(idx >= 0) arr[idx] = merged; else arr.push(merged);
+  });
+  Object.keys(dateMap).forEach(d => dateMap[d].sort((a,b) => a.hour - b.hour));
 }
 
 function groupHourlyByDate(hourly){
@@ -906,7 +937,10 @@ async function loadWeather(){
     statusEl.classList.remove('hidden');
     contentEl.classList.add('hidden');
 
-    const results = await Promise.all(state.locations.map(fetchLocation));
+    const [results, kmaResults] = await Promise.all([
+      Promise.all(state.locations.map(fetchLocation)),
+      Promise.all(state.locations.map(fetchKma))
+    ]);
 
     const now = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
     document.getElementById('todayLabel').textContent = fmtDate(now);
@@ -917,6 +951,7 @@ async function loadWeather(){
     results.forEach((data, i)=>{
       const loc = state.locations[i];
       const dateMap = groupHourlyByDate(data.hourly);
+      mergeKmaIntoDateMap(dateMap, kmaResults[i] && kmaResults[i].hourly);
       const sortedDates = Object.keys(dateMap).sort();
       perLocData.push({ loc, dateMap, sortedDates, daily: data.daily });
       state.hourlyFlat[i] = sortedDates.flatMap(d => (dateMap[d]||[]).map(h => ({ date: d, ...h })));
@@ -975,56 +1010,62 @@ function findStartIndex(flat, date, hour){
 
 function buildDetailChart(slice){
   const W = 340;
-  const marginLeft = 30, marginRight = 12;
+  const marginLeft = 28, marginRight = 32;
   const plotW = W - marginLeft - marginRight;
   const n = slice.length;
   const stepX = plotW / ((n - 1) || 1);
   const xOf = i => marginLeft + i*stepX;
 
-  /* --- temperature line chart --- */
-  const tempTitleY = 10;
-  const tempTop = 22, tempH = 58;
+  const legendY = 10;
+  const plotTop = 24, plotH = 96;
+
+  /* --- precipitation probability bars (drawn behind the temp line) --- */
+  const probs = slice.map(s => (s.prob!==null && s.prob!==undefined) ? s.prob : 0);
+  const barW = Math.max((plotW/n)*0.5, 4);
+  const precipBars = probs.map((p,i)=>{
+    const barH = Math.max((p/100)*plotH, p>0?2:0);
+    const x = xOf(i) - barW/2;
+    const y = plotTop + (plotH - barH);
+    const snow = isSnow(slice[i].code);
+    const color = snow ? 'var(--snow)' : 'var(--rain)';
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${color}" opacity="0.32"/>`;
+  }).join('');
+
+  /* --- temperature line (drawn on top of the bars) --- */
   const temps = slice.map(s => s.temp);
   const tMin = Math.min(...temps), tMax = Math.max(...temps);
   const tRange = (tMax - tMin) || 1;
-  const yOfTemp = t => tempTop + (1 - (t - tMin)/tRange) * tempH;
+  const yOfTemp = t => plotTop + (1 - (t - tMin)/tRange) * plotH;
 
   const tempPointsArr = temps.map((t,i) => `${xOf(i).toFixed(1)},${yOfTemp(t).toFixed(1)}`);
   const tempPath = tempPointsArr.join(' ');
   const tempDots = temps.map((t,i)=>
-    `<circle cx="${xOf(i).toFixed(1)}" cy="${yOfTemp(t).toFixed(1)}" r="2.3" fill="var(--accent-cool)"/>`
+    `<circle cx="${xOf(i).toFixed(1)}" cy="${yOfTemp(t).toFixed(1)}" r="2.4" fill="var(--accent-cool)" stroke="var(--surface)" stroke-width="1.2"/>`
   ).join('');
   const tempValueLabels = temps.map((t,i)=>
     `<text x="${xOf(i).toFixed(1)}" y="${(yOfTemp(t)-6).toFixed(1)}" font-size="7.5" text-anchor="middle" fill="var(--text-secondary)">${Math.round(t)}°</text>`
   ).join('');
-  const tempAxisLabels = `
-    <text x="${marginLeft-4}" y="${tempTop+4}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">${Math.round(tMax)}°</text>
-    <text x="${marginLeft-4}" y="${tempTop+tempH}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">${Math.round(tMin)}°</text>`;
 
-  /* --- precipitation probability trend (bars) --- */
-  const precipTitleY = tempTop + tempH + 22;
-  const precipTop = precipTitleY + 8;
-  const precipH = 40;
-  const probs = slice.map(s => (s.prob!==null && s.prob!==undefined) ? s.prob : 0);
-  const barW = Math.max((plotW/n)*0.46, 4);
-  const precipBars = probs.map((p,i)=>{
-    const barH = Math.max((p/100)*precipH, p>0?2:0);
-    const x = xOf(i) - barW/2;
-    const y = precipTop + (precipH - barH);
-    const snow = isSnow(slice[i].code);
-    const color = snow ? 'var(--snow)' : 'var(--rain)';
-    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${color}" opacity="0.85"/>`;
-  }).join('');
-  const precipValueLabels = probs.map((p,i)=>{
-    if(p <= 0) return '';
-    return `<text x="${xOf(i).toFixed(1)}" y="${(precipTop-4).toFixed(1)}" font-size="7" text-anchor="middle" fill="var(--rain)">${p}%</text>`;
-  }).join('');
-  const precipAxisLabels = `
-    <text x="${marginLeft-4}" y="${precipTop+5}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">100%</text>
-    <text x="${marginLeft-4}" y="${precipTop+precipH}" font-size="7.5" text-anchor="end" fill="var(--text-tertiary)">0%</text>`;
+  /* --- left axis: temperature / right axis: precipitation probability --- */
+  const leftAxis = `
+    <text x="${marginLeft-4}" y="${plotTop+4}" font-size="7.5" text-anchor="end" fill="var(--accent-cool)">${Math.round(tMax)}°</text>
+    <text x="${marginLeft-4}" y="${plotTop+plotH}" font-size="7.5" text-anchor="end" fill="var(--accent-cool)">${Math.round(tMin)}°</text>`;
+  const rightAxis = `
+    <text x="${W-marginRight+5}" y="${plotTop+4}" font-size="7.5" text-anchor="start" fill="var(--rain)">100%</text>
+    <text x="${W-marginRight+5}" y="${plotTop+plotH/2+3}" font-size="7.5" text-anchor="start" fill="var(--rain)">50%</text>
+    <text x="${W-marginRight+5}" y="${plotTop+plotH}" font-size="7.5" text-anchor="start" fill="var(--rain)">0%</text>`;
+
+  const baseline = `<line x1="${marginLeft}" y1="${plotTop+plotH}" x2="${W-marginRight}" y2="${plotTop+plotH}" stroke="var(--divider)" stroke-width="1"/>`;
+
+  /* --- legend --- */
+  const legend = `
+    <line x1="${marginLeft}" y1="${legendY-3}" x2="${marginLeft+12}" y2="${legendY-3}" stroke="var(--accent-cool)" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="${marginLeft+16}" y="${legendY}" font-size="9" font-weight="700" fill="var(--text-secondary)">기온</text>
+    <rect x="${marginLeft+50}" y="${legendY-8}" width="10" height="10" rx="2" fill="var(--rain)" opacity="0.55"/>
+    <text x="${marginLeft+64}" y="${legendY}" font-size="9" font-weight="700" fill="var(--text-secondary)">강수확률</text>`;
 
   /* --- shared x-axis (hour) labels --- */
-  const xAxisY = precipTop + precipH + 14;
+  const xAxisY = plotTop + plotH + 14;
   const skip = n > 8 ? 2 : 1;
   const xLabels = slice.map((s,i)=>{
     if(i % skip !== 0 && i !== n-1) return '';
@@ -1034,17 +1075,14 @@ function buildDetailChart(slice){
   const totalH = xAxisY + 6;
 
   return `<svg viewBox="0 0 ${W} ${totalH}" width="100%" height="auto">
-    <text x="${marginLeft}" y="${tempTitleY}" font-size="9" font-weight="700" fill="var(--text-secondary)">기온 추세</text>
-    <line x1="${marginLeft}" y1="${tempTop+tempH}" x2="${W-marginRight}" y2="${tempTop+tempH}" stroke="var(--divider)" stroke-width="1"/>
+    ${legend}
+    ${baseline}
+    ${precipBars}
     <polyline points="${tempPath}" fill="none" stroke="var(--accent-cool)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     ${tempDots}
     ${tempValueLabels}
-    ${tempAxisLabels}
-    <text x="${marginLeft}" y="${precipTitleY}" font-size="9" font-weight="700" fill="var(--text-secondary)">강수확률 추세</text>
-    <line x1="${marginLeft}" y1="${precipTop+precipH}" x2="${W-marginRight}" y2="${precipTop+precipH}" stroke="var(--divider)" stroke-width="1"/>
-    ${precipBars}
-    ${precipValueLabels}
-    ${precipAxisLabels}
+    ${leftAxis}
+    ${rightAxis}
     ${xLabels}
   </svg>`;
 }
