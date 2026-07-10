@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>출퇴근 날씨</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1B1E22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="출퇴근 날씨">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F5F6F3;
+    --surface:#FFFFFF;
+    --text-primary:#1B1E22;
+    --text-secondary:#767C87;
+    --text-tertiary:#A6ABB3;
+    --divider:#E9EAE6;
+    --accent-warm:#E0654A;
+    --accent-cool:#3E6FD9;
+    --rain:#2F6FED;
+    --rain-bg:rgba(47,111,237,0.09);
+    --snow:#6B5CE0;
+    --snow-bg:rgba(107,92,224,0.10);
+    --idle:#D8DAD5;
+    --radius:16px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:'Inter', sans-serif;
+    background:var(--bg);
+    color:var(--text-primary);
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .app{
+    max-width:420px;
+    margin:0 auto;
+    padding:16px 16px 32px;
+  }
+  header{
+    display:flex;
+    align-items:flex-end;
+    justify-content:space-between;
+    margin-bottom:14px;
+  }
+  header h1{
+    font-family:'DM Sans', sans-serif;
+    font-size:20px;
+    font-weight:700;
+    letter-spacing:-0.02em;
+  }
+  header .date{
+    font-size:12.5px;
+    color:var(--text-secondary);
+    margin-top:2px;
+  }
+  #refreshBtn{
+    background:var(--surface);
+    border:1px solid var(--divider);
+    border-radius:10px;
+    width:36px;
+    height:36px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    color:var(--text-secondary);
+    transition:transform .3s ease;
+  }
+  #refreshBtn:active{ transform:rotate(180deg); }
+  #refreshBtn svg{ width:18px; height:18px; }
+
+  /* tabs */
+  .tabbar{
+    display:flex;
+    gap:4px;
+    background:var(--surface);
+    border:1px solid var(--divider);
+    border-radius:12px;
+    padding:4px;
+    margin-bottom:16px;
+  }
+  .tab-btn{
+    flex:1;
+    border:none;
+    background:transparent;
+    padding:9px 0;
+    font-family:'Inter', sans-serif;
+    font-size:13.5px;
+    font-weight:600;
+    color:var(--text-tertiary);
+    border-radius:9px;
+    cursor:pointer;
+    transition:background .2s ease, color .2s ease;
+  }
+  .tab-btn.active{
+    background:var(--bg);
+    color:var(--text-primary);
+  }
+  .view{ display:none; }
+  .view.active{ display:block; }
+
+  .location-card{
+    background:var(--surface);
+    border-radius:var(--radius);
+    padding:14px 16px 16px;
+    margin-bottom:12px;
+    border:1px solid var(--divider);
+  }
+  .loc-title-row{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom:10px;
+  }
+  .loc-name{
+    font-family:'DM Sans', sans-serif;
+    font-size:15.5px;
+    font-weight:600;
+  }
+  .loc-now{
+    font-size:11.5px;
+    color:var(--text-tertiary);
+  }
+
+  /* signature: 24h commute strip */
+  .strip-wrap{
+    position:relative;
+    height:22px;
+    margin-bottom:12px;
+  }
+  .strip-track{
+    position:absolute;
+    top:9px;
+    left:0; right:0;
+    height:4px;
+    background:var(--idle);
+    border-radius:2px;
+  }
+  .strip-zone{
+    position:absolute;
+    top:9px;
+    height:4px;
+    border-radius:2px;
+  }
+  .strip-zone.am, .strip-zone.pm{ background:var(--accent-cool); }
+  .strip-zone.lunch{ background:var(--accent-warm); }
+  .strip-now{
+    position:absolute;
+    top:5px;
+    width:2px;
+    height:12px;
+    background:var(--text-primary);
+    border-radius:1px;
+  }
+  .strip-labels{
+    position:absolute;
+    top:16px;
+    left:0; right:0;
+    display:flex;
+    justify-content:space-between;
+    font-size:9.5px;
+    color:var(--text-tertiary);
+  }
+
+  .blocks-row{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:8px;
+  }
+  .col-header-row{
+    margin-bottom:8px;
+    padding-bottom:8px;
+    border-bottom:1px solid var(--divider);
+  }
+  .col-header-row .colname{
+    text-align:center;
+    font-size:11px;
+    font-weight:700;
+    color:var(--text-primary);
+    letter-spacing:-0.01em;
+  }
+  .block{
+    background:var(--bg);
+    border-radius:12px;
+    padding:10px 6px 9px;
+    text-align:center;
+    position:relative;
+    overflow:hidden;
+  }
+  .block.precip-rain{ background:var(--rain-bg); }
+  .block.precip-snow{ background:var(--snow-bg); }
+  .block .label{
+    font-size:10.5px;
+    color:var(--text-secondary);
+    font-weight:600;
+    margin-bottom:4px;
+  }
+  .block .icon{ font-size:19px; line-height:1; margin-bottom:3px; }
+  .block .temp{
+    font-family:'DM Sans', sans-serif;
+    font-size:17px;
+    font-weight:700;
+    letter-spacing:-0.02em;
+  }
+  .block .delta{
+    font-size:10.5px;
+    margin-top:2px;
+    font-weight:600;
+  }
+  .delta.up{ color:var(--accent-warm); }
+  .delta.down{ color:var(--accent-cool); }
+  .delta.flat{ color:var(--text-tertiary); }
+  .block .precip-tag{
+    font-size:9px;
+    font-weight:700;
+    margin-top:3px;
+    color:var(--rain);
+  }
+  .block.precip-snow .precip-tag{ color:var(--snow); }
+
+  .section-label{
+    font-size:12px;
+    font-weight:600;
+    color:var(--text-secondary);
+    margin:18px 2px 8px;
+  }
+
+  .days-scroll{
+    display:flex;
+    gap:8px;
+    overflow-x:auto;
+    padding-bottom:4px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .days-scroll::-webkit-scrollbar{ height:0; }
+  .day-card{
+    flex:0 0 auto;
+    width:72px;
+    background:var(--surface);
+    border:1px solid var(--divider);
+    border-radius:12px;
+    padding:9px 6px;
+    text-align:center;
+  }
+  .day-card.precip-rain{ background:var(--rain-bg); border-color:transparent; }
+  .day-card.precip-snow{ background:var(--snow-bg); border-color:transparent; }
+  .day-card .dname{
+    font-size:10.5px;
+    font-weight:600;
+    color:var(--text-secondary);
+    margin-bottom:5px;
+  }
+  .day-card .dicon{ font-size:18px; margin-bottom:4px; }
+  .day-card .drange{
+    font-family:'DM Sans', sans-serif;
+    font-size:12.5px;
+    font-weight:600;
+  }
+  .day-card .drange .lo{ color:var(--text-tertiary); font-weight:500; }
+  .day-card .dtag{
+    font-size:8.5px;
+    font-weight:700;
+    color:var(--rain);
+    margin-top:3px;
+  }
+  .day-card.precip-snow .dtag{ color:var(--snow); }
+
+  .loc-block-group{ margin-bottom:14px; }
+  .loc-block-group:last-child{ margin-bottom:0; }
+  .mini-loc-label{
+    font-size:11px;
+    font-weight:600;
+    color:var(--text-tertiary);
+    margin-bottom:6px;
+  }
+
+  #status{
+    text-align:center;
+    color:var(--text-tertiary);
+    font-size:12.5px;
+    padding:40px 0;
+  }
+  .hidden{ display:none; }
+
+  /* settings view */
+  .settings-card{
+    background:var(--surface);
+    border:1px solid var(--divider);
+    border-radius:var(--radius);
+    padding:16px;
+    margin-bottom:12px;
+  }
+  .settings-card .slot-label{
+    font-size:11px;
+    font-weight:700;
+    color:var(--text-tertiary);
+    letter-spacing:.02em;
+    margin-bottom:6px;
+    text-transform:uppercase;
+  }
+  .current-loc-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:10px;
+  }
+  .current-loc-row .name{
+    font-family:'DM Sans', sans-serif;
+    font-size:16px;
+    font-weight:600;
+  }
+  .edit-btn{
+    background:var(--bg);
+    border:1px solid var(--divider);
+    border-radius:8px;
+    padding:6px 12px;
+    font-size:12px;
+    font-weight:600;
+    color:var(--text-secondary);
+    cursor:pointer;
+  }
+  .search-row{
+    display:flex;
+    gap:8px;
+    margin-top:4px;
+  }
+  .search-row input{
+    flex:1;
+    border:1px solid var(--divider);
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:13.5px;
+    font-family:'Inter', sans-serif;
+    background:var(--bg);
+    color:var(--text-primary);
+  }
+  .search-row input:focus{ outline:2px solid var(--accent-cool); outline-offset:1px; }
+  .search-row button{
+    border:none;
+    background:var(--text-primary);
+    color:#fff;
+    border-radius:10px;
+    padding:0 14px;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .search-results{
+    margin-top:10px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .result-item{
+    display:flex;
+    flex-direction:column;
+    text-align:left;
+    border:1px solid var(--divider);
+    background:var(--bg);
+    border-radius:10px;
+    padding:9px 12px;
+    cursor:pointer;
+    font-family:'Inter', sans-serif;
+  }
+  .result-item:hover{ border-color:var(--accent-cool); }
+  .result-item .rname{ font-size:13.5px; font-weight:600; color:var(--text-primary); }
+  .result-item .rmeta{ font-size:11px; color:var(--text-tertiary); margin-top:1px; }
+  .search-status{
+    font-size:12px;
+    color:var(--text-tertiary);
+    margin-top:8px;
+  }
+  .time-row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 0;
+    border-bottom:1px solid var(--divider);
+  }
+  .time-row:last-of-type{ border-bottom:none; }
+  .time-row-label{
+    font-size:13px;
+    font-weight:600;
+    color:var(--text-primary);
+    width:38px;
+    flex-shrink:0;
+  }
+  .time-input{
+    flex:1;
+    min-width:0;
+    border:1px solid var(--divider);
+    border-radius:8px;
+    padding:7px 6px;
+    font-size:12.5px;
+    font-family:'Inter', sans-serif;
+    background:var(--bg);
+    color:var(--text-primary);
+  }
+  .time-sep{
+    font-size:12px;
+    color:var(--text-tertiary);
+    flex-shrink:0;
+  }
+  .settings-hint{
+    font-size:12px;
+    color:var(--text-tertiary);
+    line-height:1.5;
+    margin-top:4px;
+    padding:0 2px;
+  }
+  .saved-toast{
+    font-size:11.5px;
+    color:var(--accent-cool);
+    font-weight:600;
+    margin-top:6px;
+  }
+
+  @media (max-width:360px){
+    .block .icon{ font-size:17px; }
+    .block .temp{ font-size:15.5px; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>출퇴근 날씨</h1>
+        <div class="date" id="todayLabel">-</div>
+      </div>
+      <button id="refreshBtn" aria-label="새로고침">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="tabbar">
+      <button class="tab-btn active" data-tab="weather">날씨</button>
+      <button class="tab-btn" data-tab="settings">설정</button>
+    </div>
+
+    <div class="view active" id="view-weather">
+      <div id="status">불러오는 중...</div>
+      <div id="content" class="hidden"></div>
+    </div>
+
+    <div class="view" id="view-settings">
+      <div id="settingsContent"></div>
+    </div>
+  </div>
+
+<script>
+const DEFAULT_LOCATIONS = [
+  { name:'용인 죽전동', lat:37.3253, lon:127.1082 },
+  { name:'성남 분당구', lat:37.3826, lon:127.1189 }
+];
+
+const DEFAULT_TIMES = {
+  am:    { start:8,  end:9,    label:'출근' },
+  lunch: { start:12, end:13.5, label:'점심' },
+  pm:    { start:17, end:19,   label:'퇴근' }
+};
+
+function loadLocationsFromURL(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get('locs');
+    if(!encoded) return null;
+    const decoded = JSON.parse(decodeURIComponent(atob(encoded)));
+    if(Array.isArray(decoded) && decoded.length === 2 &&
+       decoded.every(l => typeof l.lat === 'number' && typeof l.lon === 'number' && typeof l.name === 'string')){
+      return decoded;
+    }
+    return null;
+  }catch(e){ return null; }
+}
+
+function loadTimesFromURL(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get('times');
+    if(!encoded) return null;
+    const decoded = JSON.parse(decodeURIComponent(atob(encoded)));
+    const keys = ['am','lunch','pm'];
+    if(keys.every(k => decoded[k] && typeof decoded[k].start === 'number' && typeof decoded[k].end === 'number')){
+      keys.forEach(k => decoded[k].label = DEFAULT_TIMES[k].label);
+      return decoded;
+    }
+    return null;
+  }catch(e){ return null; }
+}
+
+function saveLocationsToURL(locs){
+  try{
+    const encoded = btoa(encodeURIComponent(JSON.stringify(locs)));
+    const url = new URL(window.location.href);
+    url.searchParams.set('locs', encoded);
+    history.replaceState(null, '', url.toString());
+  }catch(e){ /* ignore */ }
+}
+
+function saveTimesToURL(times){
+  try{
+    const encoded = btoa(encodeURIComponent(JSON.stringify(times)));
+    const url = new URL(window.location.href);
+    url.searchParams.set('times', encoded);
+    history.replaceState(null, '', url.toString());
+  }catch(e){ /* ignore */ }
+}
+
+const state = {
+  locations: loadLocationsFromURL() || DEFAULT_LOCATIONS.slice(),
+  times: loadTimesFromURL() || JSON.parse(JSON.stringify(DEFAULT_TIMES))
+};
+
+function getBlockHours(startDec, endDec){
+  const hours = [];
+  const from = Math.floor(startDec);
+  const to = Math.ceil(endDec);
+  for(let h = from; h < to; h++){
+    if(h < endDec) hours.push(h);
+  }
+  return hours;
+}
+
+function getBlocks(){
+  const t = state.times;
+  return ['am','lunch','pm'].map(key=>{
+    const cfg = t[key];
+    return {
+      key,
+      label: DEFAULT_TIMES[key].label,
+      hours: getBlockHours(cfg.start, cfg.end),
+      startPct: cfg.start/24*100,
+      widthPct: Math.max(cfg.end - cfg.start, 0)/24*100
+    };
+  });
+}
+
+function decToTimeStr(dec){
+  const h = Math.floor(dec);
+  const m = Math.round((dec - h) * 60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+function timeStrToDec(str){
+  const [h,m] = str.split(':').map(Number);
+  return h + (m||0)/60;
+}
+
+const PRECIP_CODES = new Set([51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99]);
+const SNOW_CODES = new Set([56,57,71,73,75,77,85,86]);
+
+function weatherIcon(code, isDay=true){
+  if(code===0) return isDay? '☀️':'🌙';
+  if(code===1) return isDay? '🌤️':'🌙';
+  if(code===2) return '⛅';
+  if(code===3) return '☁️';
+  if(code===45||code===48) return '🌫️';
+  if([51,53,55].includes(code)) return '🌦️';
+  if([56,57].includes(code)) return '🌨️';
+  if([61,63,65,66,67].includes(code)) return '🌧️';
+  if([71,73,75,77].includes(code)) return '❄️';
+  if([80,81,82].includes(code)) return '🌧️';
+  if([85,86].includes(code)) return '🌨️';
+  if([95,96,99].includes(code)) return '⛈️';
+  return '🌡️';
+}
+
+function isPrecip(code){ return PRECIP_CODES.has(code); }
+function isSnow(code){ return SNOW_CODES.has(code); }
+
+function weatherStatusText(code){
+  if(code===0) return '맑음';
+  if(code===1) return '대체로 맑음';
+  if(code===2) return '구름조금';
+  if(code===3) return '흐림';
+  if(code===45||code===48) return '안개';
+  if([51,53,55].includes(code)) return '이슬비';
+  if([56,57].includes(code)) return '어는이슬비';
+  if([61,63,65].includes(code)) return '비';
+  if([66,67].includes(code)) return '어는비';
+  if([71,73,75].includes(code)) return '눈';
+  if(code===77) return '눈날림';
+  if([80,81,82].includes(code)) return '소나기';
+  if([85,86].includes(code)) return '눈소나기';
+  if([95,96,99].includes(code)) return '뇌우';
+  return '-';
+}
+
+function fmtDate(d){
+  const days=['일','월','화','수','목','금','토'];
+  return `${d.getMonth()+1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
+}
+function fmtDayShort(d){
+  const days=['일','월','화','수','목','금','토'];
+  return `${d.getDate()}일(${days[d.getDay()]})`;
+}
+
+async function fetchLocation(loc){
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
+    `&hourly=temperature_2m,precipitation,precipitation_probability,weather_code,is_day` +
+    `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max` +
+    `&timezone=Asia%2FSeoul&past_days=1&forecast_days=7`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('weather fetch failed');
+  return res.json();
+}
+
+function groupHourlyByDate(hourly){
+  const map = {};
+  hourly.time.forEach((t, i)=>{
+    const date = t.slice(0,10);
+    const hour = parseInt(t.slice(11,13),10);
+    if(!map[date]) map[date] = [];
+    map[date].push({
+      hour,
+      temp: hourly.temperature_2m[i],
+      precip: hourly.precipitation[i],
+      prob: hourly.precipitation_probability ? hourly.precipitation_probability[i] : null,
+      code: hourly.weather_code[i],
+      isDay: hourly.is_day[i]
+    });
+  });
+  return map;
+}
+
+function blockStats(hoursArr, blockHours){
+  const hits = hoursArr.filter(h => blockHours.includes(h.hour));
+  if(hits.length===0) return null;
+  const avgTemp = hits.reduce((s,h)=>s+h.temp,0)/hits.length;
+  let rep = hits[0];
+  let maxPrecip = -1;
+  hits.forEach(h=>{ if(h.precip > maxPrecip){ maxPrecip = h.precip; rep = h; } });
+  const precipFlag = hits.some(h => h.precip > 0.1 || isPrecip(h.code));
+  const snowFlag = hits.some(h => isSnow(h.code));
+  const probs = hits.map(h => h.prob).filter(p => p !== null && p !== undefined);
+  const maxProb = probs.length ? Math.max(...probs) : null;
+  return { avgTemp, code: rep.code, isDay: rep.isDay, precipFlag, snowFlag, maxProb };
+}
+
+function deltaSpan(delta){
+  if(delta === null) return '';
+  const rounded = Math.round(delta*10)/10;
+  if(Math.abs(rounded) < 0.3) return `<span class="delta flat">– 어제와 비슷</span>`;
+  const cls = rounded > 0 ? 'up' : 'down';
+  const arrow = rounded > 0 ? '▲' : '▼';
+  return `<span class="delta ${cls}">${arrow}${Math.abs(rounded).toFixed(1)}°</span>`;
+}
+
+function renderLocation(loc, dateMap, sortedDates){
+  const todayIdx = 1; // past_days=1 -> index0=yesterday, index1=today
+  const todayDate = sortedDates[todayIdx];
+  const yestDate = sortedDates[todayIdx-1];
+  const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
+  const nowHour = nowKST.getHours() + nowKST.getMinutes()/60;
+  const nowPct = nowHour/24*100;
+
+  const strip = `
+    <div class="strip-wrap">
+      <div class="strip-track"></div>
+      ${getBlocks().map(b=>`<div class="strip-zone ${b.key}" style="left:${b.startPct}%; width:${b.widthPct}%;"></div>`).join('')}
+      <div class="strip-now" style="left:${nowPct}%;"></div>
+      <div class="strip-labels"><span>0시</span><span>12시</span><span>24시</span></div>
+    </div>`;
+
+  const colHeader = `
+    <div class="blocks-row col-header-row">
+      ${getBlocks().map(b=>`<div class="colname">${b.label}</div>`).join('')}
+    </div>`;
+
+  const todayHours = dateMap[todayDate] || [];
+  const yestHours = dateMap[yestDate] || [];
+
+  const blocksHtml = getBlocks().map(b=>{
+    const todayStat = blockStats(todayHours, b.hours);
+    const yestStat = blockStats(yestHours, b.hours);
+    if(!todayStat){
+      return `<div class="block"><div class="label">-</div><div class="icon">–</div><div class="temp">-</div></div>`;
+    }
+    const delta = yestStat ? todayStat.avgTemp - yestStat.avgTemp : null;
+    const precipClass = todayStat.precipFlag ? (todayStat.snowFlag ? 'precip-snow' : 'precip-rain') : '';
+    const probTxt = todayStat.maxProb !== null ? ` ${todayStat.maxProb}%` : '';
+    const tag = todayStat.precipFlag ? `<div class="precip-tag">${todayStat.snowFlag?'눈 예보':'비 예보'}${probTxt}</div>` : '';
+    return `
+      <div class="block ${precipClass}">
+        <div class="label">${weatherStatusText(todayStat.code)}</div>
+        <div class="icon">${weatherIcon(todayStat.code, todayStat.isDay)}</div>
+        <div class="temp">${Math.round(todayStat.avgTemp)}°</div>
+        ${deltaSpan(delta)}
+        ${tag}
+      </div>`;
+  }).join('');
+
+  const detailDays = [todayIdx+1, todayIdx+2];
+  const detailHtml = detailDays.map((idx, i)=>{
+    const date = sortedDates[idx];
+    if(!date) return '';
+    const prevDate = sortedDates[idx-1];
+    const hours = dateMap[date] || [];
+    const prevHours = dateMap[prevDate] || [];
+    const d = new Date(date + 'T00:00:00');
+    const label = i===0 ? '내일' : fmtDayShort(d);
+    const blocks = getBlocks().map(b=>{
+      const stat = blockStats(hours, b.hours);
+      const prevStat = blockStats(prevHours, b.hours);
+      if(!stat) return `<div class="block"><div class="label">-</div><div class="icon">–</div><div class="temp">-</div></div>`;
+      const delta = prevStat ? stat.avgTemp - prevStat.avgTemp : null;
+      const precipClass = stat.precipFlag ? (stat.snowFlag ? 'precip-snow' : 'precip-rain') : '';
+      const probTxt = stat.maxProb !== null ? ` ${stat.maxProb}%` : '';
+      const tag = stat.precipFlag ? `<div class="precip-tag">${stat.snowFlag?'눈':'비'}${probTxt}</div>` : '';
+      return `
+        <div class="block ${precipClass}">
+          <div class="label">${weatherStatusText(stat.code)}</div>
+          <div class="icon">${weatherIcon(stat.code, stat.isDay)}</div>
+          <div class="temp">${Math.round(stat.avgTemp)}°</div>
+          ${deltaSpan(delta)}
+          ${tag}
+        </div>`;
+    }).join('');
+    return `
+      <div class="loc-block-group">
+        <div class="mini-loc-label">${label}</div>
+        <div class="blocks-row">${blocks}</div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="location-card">
+      <div class="loc-title-row">
+        <div class="loc-name">${loc.name}</div>
+        <div class="loc-now">지금 ${nowKST.getHours()}:${String(nowKST.getMinutes()).padStart(2,'0')}</div>
+      </div>
+      ${strip}
+      ${colHeader}
+      <div class="loc-block-group">
+        <div class="mini-loc-label">오늘</div>
+        <div class="blocks-row">${blocksHtml}</div>
+      </div>
+      ${detailHtml}
+    </div>`;
+}
+
+function renderExtended(loc, daily, sortedDates){
+  const todayIdx = 1;
+  const startIdx = todayIdx + 3;
+  const cards = [];
+  for(let i=startIdx; i<daily.time.length; i++){
+    const date = daily.time[i];
+    const d = new Date(date+'T00:00:00');
+    const code = daily.weather_code[i];
+    const hi = Math.round(daily.temperature_2m_max[i]);
+    const lo = Math.round(daily.temperature_2m_min[i]);
+    const precip = daily.precipitation_sum[i];
+    const prob = daily.precipitation_probability_max ? daily.precipitation_probability_max[i] : null;
+    const flag = isPrecip(code) || precip > 0.2;
+    const snow = isSnow(code);
+    const cls = flag ? (snow ? 'precip-snow' : 'precip-rain') : '';
+    const probTxt = (flag && prob !== null && prob !== undefined) ? ` ${prob}%` : '';
+    const tag = flag ? `<div class="dtag">${snow?'눈':'비'}${probTxt}</div>` : '';
+    cards.push(`
+      <div class="day-card ${cls}">
+        <div class="dname">${fmtDayShort(d)}</div>
+        <div class="dicon">${weatherIcon(code, true)}</div>
+        <div class="drange">${hi}° <span class="lo">${lo}°</span></div>
+        ${tag}
+      </div>`);
+  }
+  return `
+    <div class="loc-block-group">
+      <div class="mini-loc-label">${loc.name}</div>
+      <div class="days-scroll">${cards.join('')}</div>
+    </div>`;
+}
+
+async function loadWeather(){
+  const statusEl = document.getElementById('status');
+  const contentEl = document.getElementById('content');
+  try{
+    statusEl.textContent = '불러오는 중...';
+    statusEl.classList.remove('hidden');
+    contentEl.classList.add('hidden');
+
+    const results = await Promise.all(state.locations.map(fetchLocation));
+
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
+    document.getElementById('todayLabel').textContent = fmtDate(now);
+
+    let html = '';
+    const perLocData = [];
+
+    results.forEach((data, i)=>{
+      const loc = state.locations[i];
+      const dateMap = groupHourlyByDate(data.hourly);
+      const sortedDates = Object.keys(dateMap).sort();
+      perLocData.push({ loc, dateMap, sortedDates, daily: data.daily });
+      html += renderLocation(loc, dateMap, sortedDates);
+    });
+
+    html += `<div class="section-label">이후 예보 (일 단위)</div>`;
+    perLocData.forEach(({loc, daily, sortedDates})=>{
+      html += renderExtended(loc, daily, sortedDates);
+    });
+
+    contentEl.innerHTML = html;
+    statusEl.classList.add('hidden');
+    contentEl.classList.remove('hidden');
+  }catch(err){
+    console.error(err);
+    statusEl.textContent = '날씨 정보를 불러오지 못했어요 (' + (err.message || err) + '). 새로고침 버튼을 눌러 다시 시도해주세요.';
+    statusEl.classList.remove('hidden');
+    contentEl.classList.add('hidden');
+  }
+}
+
+/* ---------- settings view ---------- */
+let editingSlot = null; // 0 or 1, null = none open
+
+function renderSettings(){
+  const wrap = document.getElementById('settingsContent');
+
+  const timesHtml = `
+    <div class="settings-card">
+      <div class="slot-label">시간대 설정</div>
+      ${['am','lunch','pm'].map(key=>{
+        const cfg = state.times[key];
+        return `
+        <div class="time-row">
+          <div class="time-row-label">${DEFAULT_TIMES[key].label}</div>
+          <input type="time" class="time-input" data-timekey="${key}" data-bound="start" value="${decToTimeStr(cfg.start)}">
+          <span class="time-sep">~</span>
+          <input type="time" class="time-input" data-timekey="${key}" data-bound="end" value="${decToTimeStr(cfg.end)}">
+        </div>`;
+      }).join('')}
+      <div class="settings-hint">출근·점심·퇴근 시간을 실제 생활 패턴에 맞게 바꿀 수 있어요.</div>
+    </div>`;
+
+  const locsHtml = state.locations.map((loc, idx)=>{
+    const isEditing = editingSlot === idx;
+    return `
+      <div class="settings-card">
+        <div class="slot-label">지역 ${idx+1}</div>
+        <div class="current-loc-row">
+          <div class="name">${loc.name}</div>
+          <button class="edit-btn" data-edit="${idx}">${isEditing ? '닫기' : '변경'}</button>
+        </div>
+        ${isEditing ? `
+          <div class="search-row">
+            <input type="text" id="searchInput-${idx}" placeholder="동네 이름 검색 (예: 판교동)" />
+            <button data-search="${idx}">검색</button>
+          </div>
+          <div class="search-results" id="searchResults-${idx}"></div>
+          <div class="search-status" id="searchStatus-${idx}"></div>
+        ` : ''}
+      </div>`;
+  }).join('');
+
+  wrap.innerHTML = timesHtml + locsHtml + `<div class="settings-hint">지역을 바꾸면 주소창의 링크에 저장돼요. 이 페이지를 북마크해두면 다음에도 같은 설정으로 열려요.</div>`;
+
+  document.querySelectorAll('.time-input').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const key = inp.getAttribute('data-timekey');
+      const bound = inp.getAttribute('data-bound');
+      if(!inp.value) return;
+      const dec = timeStrToDec(inp.value);
+      state.times[key][bound] = dec;
+      saveTimesToURL(state.times);
+      loadWeather();
+    });
+  });
+
+  document.querySelectorAll('[data-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.getAttribute('data-edit'),10);
+      editingSlot = (editingSlot === idx) ? null : idx;
+      renderSettings();
+      if(editingSlot !== null){
+        const input = document.getElementById(`searchInput-${editingSlot}`);
+        if(input){
+          input.focus();
+          input.addEventListener('keydown', e=>{
+            if(e.key === 'Enter') doSearch(editingSlot);
+          });
+        }
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-search]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      doSearch(parseInt(btn.getAttribute('data-search'),10));
+    });
+  });
+}
+
+async function doSearch(idx){
+  const input = document.getElementById(`searchInput-${idx}`);
+  const resultsEl = document.getElementById(`searchResults-${idx}`);
+  const statusEl = document.getElementById(`searchStatus-${idx}`);
+  const query = input.value.trim();
+  if(!query){ return; }
+  statusEl.textContent = '검색 중...';
+  resultsEl.innerHTML = '';
+  try{
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=ko&format=json`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if(!data.results || data.results.length===0){
+      statusEl.textContent = '검색 결과가 없어요. 다른 이름으로 시도해보세요.';
+      return;
+    }
+    statusEl.textContent = '';
+    resultsEl.innerHTML = data.results.map((r, i)=>{
+      const meta = [r.admin1, r.admin2, r.country].filter(Boolean).join(' · ');
+      return `<div class="result-item" data-ridx="${i}">
+        <div class="rname">${r.name}</div>
+        <div class="rmeta">${meta}</div>
+      </div>`;
+    }).join('');
+    resultsEl.querySelectorAll('.result-item').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const r = data.results[parseInt(el.getAttribute('data-ridx'),10)];
+        selectLocation(idx, { name:r.name, lat:r.latitude, lon:r.longitude });
+      });
+    });
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = '검색에 실패했어요. 다시 시도해주세요.';
+  }
+}
+
+function selectLocation(idx, newLoc){
+  state.locations[idx] = newLoc;
+  saveLocationsToURL(state.locations);
+  editingSlot = null;
+  renderSettings();
+  const wrap = document.getElementById('settingsContent');
+  const toast = document.createElement('div');
+  toast.className = 'saved-toast';
+  toast.textContent = `${newLoc.name}으로 저장했어요. 날씨 탭에서 확인해보세요.`;
+  wrap.appendChild(toast);
+  loadWeather();
+}
+
+/* ---------- global error surfacing ---------- */
+function showFatalError(msg){
+  const statusEl = document.getElementById('status');
+  const contentEl = document.getElementById('content');
+  if(statusEl){
+    statusEl.textContent = '오류: ' + msg;
+    statusEl.classList.remove('hidden');
+  }
+  if(contentEl) contentEl.classList.add('hidden');
+}
+window.addEventListener('error', function(e){
+  showFatalError(e.message || '알 수 없는 오류');
+});
+window.addEventListener('unhandledrejection', function(e){
+  const reason = e.reason && e.reason.message ? e.reason.message : String(e.reason);
+  showFatalError(reason);
+});
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`view-${btn.dataset.tab}`).classList.add('active');
+  });
+});
+
+document.getElementById('refreshBtn').addEventListener('click', loadWeather);
+
+renderSettings();
+loadWeather();
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+
+</script>
+</body>
+</html>
