@@ -447,6 +447,32 @@
     color:var(--text-secondary);
     cursor:pointer;
   }
+  .loc-actions{
+    display:flex;
+    gap:6px;
+    flex-shrink:0;
+  }
+  .delete-btn{
+    background:var(--bg);
+    border:1px solid var(--divider);
+    border-radius:8px;
+    padding:6px 12px;
+    font-size:12px;
+    font-weight:600;
+    color:var(--accent-warm);
+    cursor:pointer;
+  }
+  .add-loc-btn{
+    width:100%;
+    background:var(--bg);
+    border:1px dashed var(--divider);
+    border-radius:10px;
+    padding:11px 0;
+    font-size:13px;
+    font-weight:700;
+    color:var(--text-secondary);
+    cursor:pointer;
+  }
   .search-row{
     display:flex;
     gap:8px;
@@ -616,26 +642,27 @@ const DEFAULT_TIMES = {
   pm:    { start:17, end:19,   label:'퇴근' }
 };
 
-function loadLocationsFromURL(){
+const LS_LOCATIONS_KEY = 'cw_locations';
+const LS_TIMES_KEY = 'cw_times';
+
+function loadLocationsFromStorage(){
   try{
-    const params = new URLSearchParams(window.location.search);
-    const encoded = params.get('locs');
-    if(!encoded) return null;
-    const decoded = JSON.parse(decodeURIComponent(atob(encoded)));
-    if(Array.isArray(decoded) && decoded.length === 2 &&
-       decoded.every(l => typeof l.lat === 'number' && typeof l.lon === 'number' && typeof l.name === 'string')){
-      return decoded;
+    const raw = localStorage.getItem(LS_LOCATIONS_KEY);
+    if(!raw) return null;
+    const arr = JSON.parse(raw);
+    if(Array.isArray(arr) && arr.length > 0 &&
+       arr.every(l => typeof l.lat === 'number' && typeof l.lon === 'number' && typeof l.name === 'string')){
+      return arr;
     }
     return null;
   }catch(e){ return null; }
 }
 
-function loadTimesFromURL(){
+function loadTimesFromStorage(){
   try{
-    const params = new URLSearchParams(window.location.search);
-    const encoded = params.get('times');
-    if(!encoded) return null;
-    const decoded = JSON.parse(decodeURIComponent(atob(encoded)));
+    const raw = localStorage.getItem(LS_TIMES_KEY);
+    if(!raw) return null;
+    const decoded = JSON.parse(raw);
     const keys = ['am','lunch','pm'];
     if(keys.every(k => decoded[k] && typeof decoded[k].start === 'number' && typeof decoded[k].end === 'number')){
       keys.forEach(k => decoded[k].label = DEFAULT_TIMES[k].label);
@@ -645,29 +672,46 @@ function loadTimesFromURL(){
   }catch(e){ return null; }
 }
 
-function saveLocationsToURL(locs){
-  try{
-    const encoded = btoa(encodeURIComponent(JSON.stringify(locs)));
-    const url = new URL(window.location.href);
-    url.searchParams.set('locs', encoded);
-    history.replaceState(null, '', url.toString());
-  }catch(e){ /* ignore */ }
+function saveLocationsToStorage(locs){
+  try{ localStorage.setItem(LS_LOCATIONS_KEY, JSON.stringify(locs)); }catch(e){ /* ignore */ }
 }
 
-function saveTimesToURL(times){
+function saveTimesToStorage(times){
+  try{ localStorage.setItem(LS_TIMES_KEY, JSON.stringify(times)); }catch(e){ /* ignore */ }
+}
+
+// 예전 버전은 설정을 URL 쿼리(?locs=&times=)에 저장했었다.
+// localStorage에 아직 저장된 값이 없고, 옛 URL에 값이 남아있다면 한 번만 옮겨온다.
+function migrateLegacyUrlSettings(){
   try{
-    const encoded = btoa(encodeURIComponent(JSON.stringify(times)));
+    const params = new URLSearchParams(window.location.search);
+    const locsParam = params.get('locs');
+    const timesParam = params.get('times');
+    if(!locsParam && !timesParam) return;
+
+    if(locsParam && !localStorage.getItem(LS_LOCATIONS_KEY)){
+      const decoded = JSON.parse(decodeURIComponent(atob(locsParam)));
+      if(Array.isArray(decoded) && decoded.length > 0){
+        saveLocationsToStorage(decoded);
+      }
+    }
+    if(timesParam && !localStorage.getItem(LS_TIMES_KEY)){
+      const decoded = JSON.parse(decodeURIComponent(atob(timesParam)));
+      saveTimesToStorage(decoded);
+    }
     const url = new URL(window.location.href);
-    url.searchParams.set('times', encoded);
-    history.replaceState(null, '', url.toString());
+    url.searchParams.delete('locs');
+    url.searchParams.delete('times');
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
   }catch(e){ /* ignore */ }
 }
+migrateLegacyUrlSettings();
 
 const state = {
-  locations: loadLocationsFromURL() || DEFAULT_LOCATIONS.slice(),
-  times: loadTimesFromURL() || JSON.parse(JSON.stringify(DEFAULT_TIMES)),
+  locations: loadLocationsFromStorage() || DEFAULT_LOCATIONS.slice(),
+  times: loadTimesFromStorage() || JSON.parse(JSON.stringify(DEFAULT_TIMES)),
   detail: { locIdx: 0, date: null, hour: null }, // date/hour null -> start from "now"
-  hourlyFlat: [[], []]
+  hourlyFlat: []
 };
 
 function getBlockHours(startDec, endDec){
@@ -978,6 +1022,7 @@ async function loadWeather(){
 
     let html = '';
     const perLocData = [];
+    state.hourlyFlat = state.locations.map(()=>[]);
 
     results.forEach((data, i)=>{
       const loc = state.locations[i];
@@ -1191,7 +1236,17 @@ function bindDetailPills(){
   });
 }
 
-let editingSlot = null; // 0 or 1, null = none open
+let editingSlot = null; // number index = editing that slot, 'new' = adding a new location, null = none open
+
+function searchBlockHtml(key){
+  return `
+    <div class="search-row">
+      <input type="text" id="searchInput-${key}" placeholder="동네 이름 검색 (예: 판교동)" />
+      <button data-search="${key}">검색</button>
+    </div>
+    <div class="search-results" id="searchResults-${key}"></div>
+    <div class="search-status" id="searchStatus-${key}"></div>`;
+}
 
 function renderSettings(){
   const wrap = document.getElementById('settingsContent');
@@ -1212,6 +1267,7 @@ function renderSettings(){
       <div class="settings-hint">출근·점심·퇴근 시간을 실제 생활 패턴에 맞게 바꿀 수 있어요.</div>
     </div>`;
 
+  const canDelete = state.locations.length > 1;
   const locsHtml = state.locations.map((loc, idx)=>{
     const isEditing = editingSlot === idx;
     return `
@@ -1219,20 +1275,24 @@ function renderSettings(){
         <div class="slot-label">지역 ${idx+1}</div>
         <div class="current-loc-row">
           <div class="name">${loc.name}</div>
-          <button class="edit-btn" data-edit="${idx}">${isEditing ? '닫기' : '변경'}</button>
-        </div>
-        ${isEditing ? `
-          <div class="search-row">
-            <input type="text" id="searchInput-${idx}" placeholder="동네 이름 검색 (예: 판교동)" />
-            <button data-search="${idx}">검색</button>
+          <div class="loc-actions">
+            <button class="edit-btn" data-edit="${idx}">${isEditing ? '닫기' : '변경'}</button>
+            ${canDelete ? `<button class="delete-btn" data-delete="${idx}">삭제</button>` : ''}
           </div>
-          <div class="search-results" id="searchResults-${idx}"></div>
-          <div class="search-status" id="searchStatus-${idx}"></div>
-        ` : ''}
+        </div>
+        ${isEditing ? searchBlockHtml(idx) : ''}
       </div>`;
   }).join('');
 
-  wrap.innerHTML = timesHtml + locsHtml + `<div class="settings-hint">지역을 바꾸면 주소창의 링크에 저장돼요. 이 페이지를 북마크해두면 다음에도 같은 설정으로 열려요.</div>`;
+  const isAddingNew = editingSlot === 'new';
+  const addCardHtml = `
+    <div class="settings-card">
+      <button class="add-loc-btn" data-add="1">${isAddingNew ? '닫기' : '+ 지역 추가'}</button>
+      ${isAddingNew ? searchBlockHtml('new') : ''}
+    </div>`;
+
+  wrap.innerHTML = timesHtml + locsHtml + addCardHtml +
+    `<div class="settings-hint">지역·시간 설정은 이 기기에 저장돼요. 앱을 껐다 켜도 그대로 유지됩니다.</div>`;
 
   document.querySelectorAll('.time-input').forEach(inp=>{
     inp.addEventListener('change', ()=>{
@@ -1241,7 +1301,7 @@ function renderSettings(){
       if(!inp.value) return;
       const dec = timeStrToDec(inp.value);
       state.times[key][bound] = dec;
-      saveTimesToURL(state.times);
+      saveTimesToStorage(state.times);
       loadWeather();
     });
   });
@@ -1251,29 +1311,47 @@ function renderSettings(){
       const idx = parseInt(btn.getAttribute('data-edit'),10);
       editingSlot = (editingSlot === idx) ? null : idx;
       renderSettings();
-      if(editingSlot !== null){
-        const input = document.getElementById(`searchInput-${editingSlot}`);
-        if(input){
-          input.focus();
-          input.addEventListener('keydown', e=>{
-            if(e.key === 'Enter') doSearch(editingSlot);
-          });
-        }
-      }
+      focusSearchInput(editingSlot);
+    });
+  });
+
+  document.querySelectorAll('[data-delete]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.getAttribute('data-delete'),10);
+      removeLocation(idx);
+    });
+  });
+
+  document.querySelectorAll('[data-add]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      editingSlot = isAddingNew ? null : 'new';
+      renderSettings();
+      focusSearchInput(editingSlot);
     });
   });
 
   document.querySelectorAll('[data-search]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      doSearch(parseInt(btn.getAttribute('data-search'),10));
+      doSearch(btn.getAttribute('data-search'));
     });
   });
 }
 
-async function doSearch(idx){
-  const input = document.getElementById(`searchInput-${idx}`);
-  const resultsEl = document.getElementById(`searchResults-${idx}`);
-  const statusEl = document.getElementById(`searchStatus-${idx}`);
+function focusSearchInput(key){
+  if(key === null) return;
+  const input = document.getElementById(`searchInput-${key}`);
+  if(input){
+    input.focus();
+    input.addEventListener('keydown', e=>{
+      if(e.key === 'Enter') doSearch(String(key));
+    });
+  }
+}
+
+async function doSearch(key){
+  const input = document.getElementById(`searchInput-${key}`);
+  const resultsEl = document.getElementById(`searchResults-${key}`);
+  const statusEl = document.getElementById(`searchStatus-${key}`);
   const query = input.value.trim();
   if(!query){ return; }
   statusEl.textContent = '검색 중...';
@@ -1297,7 +1375,7 @@ async function doSearch(idx){
     resultsEl.querySelectorAll('.result-item').forEach(el=>{
       el.addEventListener('click', ()=>{
         const r = data.results[parseInt(el.getAttribute('data-ridx'),10)];
-        selectLocation(idx, { name:r.name, lat:r.latitude, lon:r.longitude });
+        selectLocation(null, { name:r.name, lat:r.latitude, lon:r.longitude });
       });
     });
   }catch(e){
@@ -1306,9 +1384,14 @@ async function doSearch(idx){
   }
 }
 
-function selectLocation(idx, newLoc){
-  state.locations[idx] = newLoc;
-  saveLocationsToURL(state.locations);
+function selectLocation(_unused, newLoc){
+  const key = editingSlot;
+  if(key === 'new'){
+    state.locations.push(newLoc);
+  } else {
+    state.locations[key] = newLoc;
+  }
+  saveLocationsToStorage(state.locations);
   editingSlot = null;
   renderSettings();
   const wrap = document.getElementById('settingsContent');
@@ -1316,6 +1399,16 @@ function selectLocation(idx, newLoc){
   toast.className = 'saved-toast';
   toast.textContent = `${newLoc.name}으로 저장했어요. 날씨 탭에서 확인해보세요.`;
   wrap.appendChild(toast);
+  loadWeather();
+}
+
+function removeLocation(idx){
+  if(state.locations.length <= 1) return;
+  state.locations.splice(idx, 1);
+  saveLocationsToStorage(state.locations);
+  if(state.detail.locIdx >= state.locations.length) state.detail.locIdx = 0;
+  editingSlot = null;
+  renderSettings();
   loadWeather();
 }
 
