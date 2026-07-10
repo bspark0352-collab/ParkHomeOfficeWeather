@@ -1,4 +1,4 @@
-const CACHE_NAME = 'commute-weather-v1';
+const CACHE_NAME = 'commute-weather-v2';
 const APP_SHELL = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -23,8 +23,15 @@ self.addEventListener('fetch', (event) => {
   if (url.hostname.includes('open-meteo.com')) {
     return;
   }
-  // App shell: cache-first, falling back to network
+  // App shell: network-first, so new deployments (icons, fixes, etc.) show up
+  // immediately. Falls back to cache only when offline.
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((res) => {
+        const resClone = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
+        return res;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
