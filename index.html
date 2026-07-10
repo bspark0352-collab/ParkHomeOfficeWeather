@@ -1348,6 +1348,22 @@ function focusSearchInput(key){
   }
 }
 
+// 북한(조선민주주의인민공화국) 결과는 검색에서 제외한다.
+const EXCLUDED_COUNTRY_CODES = new Set(['KP']);
+function isExcludedResult(r){
+  if(r.country_code && EXCLUDED_COUNTRY_CODES.has(r.country_code)) return true;
+  const name = `${r.country||''}`;
+  return /조선민주주의인민공화국|북한|North Korea|DPRK/i.test(name);
+}
+
+async function geocodeSearch(query, language){
+  const langParam = language ? `&language=${language}` : '';
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10${langParam}&format=json`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return (data.results || []).filter(r => !isExcludedResult(r));
+}
+
 async function doSearch(key){
   const input = document.getElementById(`searchInput-${key}`);
   const resultsEl = document.getElementById(`searchResults-${key}`);
@@ -1357,15 +1373,18 @@ async function doSearch(key){
   statusEl.textContent = '검색 중...';
   resultsEl.innerHTML = '';
   try{
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=ko&format=json`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if(!data.results || data.results.length===0){
+    // 한국 동/읍/면 단위 지명은 language=ko로 안 잡히는 경우가 있어,
+    // 결과가 없으면 언어 파라미터 없이(현지 표기 기준) 한 번 더 시도한다.
+    let results = await geocodeSearch(query, 'ko');
+    if(results.length === 0){
+      results = await geocodeSearch(query, null);
+    }
+    if(results.length === 0){
       statusEl.textContent = '검색 결과가 없어요. 다른 이름으로 시도해보세요.';
       return;
     }
     statusEl.textContent = '';
-    resultsEl.innerHTML = data.results.map((r, i)=>{
+    resultsEl.innerHTML = results.map((r, i)=>{
       const meta = [r.admin1, r.admin2, r.country].filter(Boolean).join(' · ');
       return `<div class="result-item" data-ridx="${i}">
         <div class="rname">${r.name}</div>
@@ -1374,7 +1393,7 @@ async function doSearch(key){
     }).join('');
     resultsEl.querySelectorAll('.result-item').forEach(el=>{
       el.addEventListener('click', ()=>{
-        const r = data.results[parseInt(el.getAttribute('data-ridx'),10)];
+        const r = results[parseInt(el.getAttribute('data-ridx'),10)];
         selectLocation(null, { name:r.name, lat:r.latitude, lon:r.longitude });
       });
     });
@@ -1458,4 +1477,4 @@ if('serviceWorker' in navigator){
 
 </script>
 </body>
-</html>
+</html>
