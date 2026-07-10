@@ -457,6 +457,17 @@
   </div>
 
 <script>
+// index.html이 주소에 남아있으면 홈 화면 추가 시 그대로 저장되는 문제를 막기 위해
+// 페이지 로드 시점에 주소창을 깨끗한 루트 경로로 정리한다.
+(function cleanUrl(){
+  try{
+    if(/\/index\.html$/i.test(location.pathname)){
+      const cleanPath = location.pathname.replace(/index\.html$/i, '');
+      history.replaceState(null, '', cleanPath + location.search + location.hash);
+    }
+  }catch(e){ /* ignore */ }
+})();
+
 const DEFAULT_LOCATIONS = [
   { name:'용인 죽전동', lat:37.3253, lon:127.1082 },
   { name:'성남 분당구', lat:37.3826, lon:127.1189 }
