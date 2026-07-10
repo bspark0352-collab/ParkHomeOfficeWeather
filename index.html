@@ -1349,19 +1349,33 @@ function focusSearchInput(key){
 }
 
 // 북한(조선민주주의인민공화국) 결과는 검색에서 제외한다.
-const EXCLUDED_COUNTRY_CODES = new Set(['KP']);
+// countrycodes=kr로 이미 걸러지지만, 혹시 모를 경계 사례를 대비해 한 번 더 확인한다.
 function isExcludedResult(r){
-  if(r.country_code && EXCLUDED_COUNTRY_CODES.has(r.country_code)) return true;
-  const name = `${r.country||''}`;
-  return /조선민주주의인민공화국|북한|North Korea|DPRK/i.test(name);
+  const cc = ((r.address && r.address.country_code) || '').toLowerCase();
+  if(cc === 'kp') return true;
+  const countryName = (r.address && r.address.country) || '';
+  return /조선민주주의인민공화국|북한|North Korea|DPRK/i.test(countryName);
 }
 
-async function geocodeSearch(query, language){
-  const langParam = language ? `&language=${language}` : '';
-  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10${langParam}&format=json`;
+function resultMeta(r){
+  const a = r.address || {};
+  return [a.borough, a.city || a.county || a.district, a.province].filter(Boolean).join(' · ');
+}
+
+function resultPrimaryName(r){
+  return r.name || (r.display_name || '').split(',')[0];
+}
+
+// Open-Meteo 지오코딩 DB는 "죽전동" 같은 한국 동/읍/면 단위 지명을 거의 갖고 있지 않아서
+// (예: "용인시" 대표 좌표만 있고 세부 동은 없음) OpenStreetMap 기반 Nominatim으로 교체했다.
+// 대한민국(countrycodes=kr)으로 검색을 제한해 관련 없는 해외 결과와 북한을 함께 걸러낸다.
+async function geocodeSearch(query){
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}` +
+    `&format=json&addressdetails=1&accept-language=ko&limit=8&countrycodes=kr`;
   const res = await fetch(url);
+  if(!res.ok) return [];
   const data = await res.json();
-  return (data.results || []).filter(r => !isExcludedResult(r));
+  return (Array.isArray(data) ? data : []).filter(r => !isExcludedResult(r));
 }
 
 async function doSearch(key){
@@ -1373,28 +1387,22 @@ async function doSearch(key){
   statusEl.textContent = '검색 중...';
   resultsEl.innerHTML = '';
   try{
-    // 한국 동/읍/면 단위 지명은 language=ko로 안 잡히는 경우가 있어,
-    // 결과가 없으면 언어 파라미터 없이(현지 표기 기준) 한 번 더 시도한다.
-    let results = await geocodeSearch(query, 'ko');
-    if(results.length === 0){
-      results = await geocodeSearch(query, null);
-    }
+    const results = await geocodeSearch(query);
     if(results.length === 0){
       statusEl.textContent = '검색 결과가 없어요. 다른 이름으로 시도해보세요.';
       return;
     }
     statusEl.textContent = '';
     resultsEl.innerHTML = results.map((r, i)=>{
-      const meta = [r.admin1, r.admin2, r.country].filter(Boolean).join(' · ');
       return `<div class="result-item" data-ridx="${i}">
-        <div class="rname">${r.name}</div>
-        <div class="rmeta">${meta}</div>
+        <div class="rname">${resultPrimaryName(r)}</div>
+        <div class="rmeta">${resultMeta(r)}</div>
       </div>`;
     }).join('');
     resultsEl.querySelectorAll('.result-item').forEach(el=>{
       el.addEventListener('click', ()=>{
         const r = results[parseInt(el.getAttribute('data-ridx'),10)];
-        selectLocation(null, { name:r.name, lat:r.latitude, lon:r.longitude });
+        selectLocation(null, { name:resultPrimaryName(r), lat:parseFloat(r.lat), lon:parseFloat(r.lon) });
       });
     });
   }catch(e){
