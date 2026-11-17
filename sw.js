@@ -1,4 +1,4 @@
-const CACHE_NAME = 'commute-weather-v9';
+const CACHE_NAME = 'commute-weather-v10';
 const APP_SHELL = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

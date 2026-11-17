@@ -311,6 +311,16 @@
     padding:40px 0;
   }
   .hidden{ display:none; }
+  .source-note{
+    font-size:11.5px;
+    line-height:1.5;
+    color:var(--text-secondary);
+    background:var(--surface);
+    border:1px solid var(--divider);
+    border-radius:12px;
+    padding:10px 12px;
+    margin-bottom:14px;
+  }
 
   /* settings view */
   /* detail view */
@@ -805,9 +815,36 @@ async function fetchLocation(loc){
     `&hourly=temperature_2m,precipitation,precipitation_probability,weather_code,is_day` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max` +
     `&timezone=Asia%2FSeoul&past_days=1&forecast_days=7`;
-  const res = await fetch(url);
-  if(!res.ok) throw new Error('weather fetch failed');
-  return res.json();
+  // Open-Meteo 서버가 응답 없이 멈추는 경우가 있어서, 8초 제한 + 1회 재시도.
+  let lastErr;
+  for(let attempt = 0; attempt < 2; attempt++){
+    try{
+      const res = await fetchWithTimeout(url, 8000);
+      if(!res.ok) throw new Error('weather fetch failed (' + res.status + ')');
+      return await res.json();
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr;
+}
+
+async function fetchWithTimeout(url, ms){
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try{
+    return await fetch(url, { signal: ctrl.signal });
+  }catch(e){
+    if(e.name === 'AbortError') throw new Error('응답 시간 초과');
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+// 한국시간 기준 날짜 키(YYYY-MM-DD). offsetDays: -1=어제, 0=오늘, 1=내일 ...
+function kstDateKey(offsetDays){
+  const n = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
+  const d = new Date(n.getFullYear(), n.getMonth(), n.getDate() + (offsetDays || 0));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
 // 기상청(KMA) 단기예보 - 서버리스 함수(/api/kma)를 통해 조회한다.
@@ -880,9 +917,10 @@ function deltaSpan(delta){
 }
 
 function renderLocation(loc, dateMap, sortedDates, locIdx){
-  const todayIdx = 1; // past_days=1 -> index0=yesterday, index1=today
-  const todayDate = sortedDates[todayIdx];
-  const yestDate = sortedDates[todayIdx-1];
+  // 순서(index) 대신 한국시간 날짜로 오늘/어제를 찾는다.
+  // (Open-Meteo 실패 시 기상청 데이터만 있으면 어제 데이터가 없어 index가 어긋나기 때문)
+  const todayDate = kstDateKey(0);
+  const yestDate = kstDateKey(-1);
   const nowKST = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
   const nowHour = nowKST.getHours() + nowKST.getMinutes()/60;
   const nowPct = nowHour/24*100;
@@ -923,11 +961,11 @@ function renderLocation(loc, dateMap, sortedDates, locIdx){
       </div>`;
   }).join('');
 
-  const detailDays = [todayIdx+1, todayIdx+2];
-  const detailHtml = detailDays.map((idx, i)=>{
-    const date = sortedDates[idx];
-    if(!date) return '';
-    const prevDate = sortedDates[idx-1];
+  const detailDays = [1, 2];
+  const detailHtml = detailDays.map((offset, i)=>{
+    const date = kstDateKey(offset);
+    if(!dateMap[date] || dateMap[date].length === 0) return '';
+    const prevDate = kstDateKey(offset - 1);
     const hours = dateMap[date] || [];
     const prevHours = dateMap[prevDate] || [];
     const d = new Date(date + 'T00:00:00');
@@ -973,11 +1011,12 @@ function renderLocation(loc, dateMap, sortedDates, locIdx){
 }
 
 function renderExtended(loc, daily, sortedDates){
-  const todayIdx = 1;
-  const startIdx = todayIdx + 3;
+  if(!daily || !daily.time) return '';
+  const firstExtended = kstDateKey(3); // 오늘·내일·모레 이후부터
   const cards = [];
-  for(let i=startIdx; i<daily.time.length; i++){
+  for(let i=0; i<daily.time.length; i++){
     const date = daily.time[i];
+    if(date < firstExtended) continue;
     const d = new Date(date+'T00:00:00');
     const code = daily.weather_code[i];
     const hi = Math.round(daily.temperature_2m_max[i]);
@@ -1012,32 +1051,45 @@ async function loadWeather(){
     statusEl.classList.remove('hidden');
     contentEl.classList.add('hidden');
 
+    // Open-Meteo가 실패해도 기상청 데이터만으로 화면을 그릴 수 있도록
+    // 지역별 실패를 null로 받아둔다.
+    let omError = null;
     const [results, kmaResults] = await Promise.all([
-      Promise.all(state.locations.map(fetchLocation)),
+      Promise.all(state.locations.map(loc =>
+        fetchLocation(loc).catch(e => { console.error(e); omError = e; return null; })
+      )),
       Promise.all(state.locations.map(fetchKma))
     ]);
+
+    const missing = state.locations.filter((_, i) => !results[i] && !(kmaResults[i] && kmaResults[i].hourly.length));
+    if(missing.length){
+      throw omError || new Error('날씨 데이터를 받지 못했어요');
+    }
 
     const now = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Seoul' }));
     document.getElementById('todayLabel').textContent = fmtDate(now);
 
     let html = '';
+    if(results.some(r => !r)){
+      html += `<div class="source-note">Open-Meteo 서버가 응답하지 않아 기상청 예보(약 3일)만 표시하고 있어요. 어제 대비 기온과 이후 일 단위 예보는 잠시 빠져 있어요.</div>`;
+    }
     const perLocData = [];
     state.hourlyFlat = state.locations.map(()=>[]);
 
     results.forEach((data, i)=>{
       const loc = state.locations[i];
-      const dateMap = groupHourlyByDate(data.hourly);
+      const dateMap = data ? groupHourlyByDate(data.hourly) : {};
       mergeKmaIntoDateMap(dateMap, kmaResults[i] && kmaResults[i].hourly);
       const sortedDates = Object.keys(dateMap).sort();
-      perLocData.push({ loc, dateMap, sortedDates, daily: data.daily });
+      perLocData.push({ loc, dateMap, sortedDates, daily: data ? data.daily : null });
       state.hourlyFlat[i] = sortedDates.flatMap(d => (dateMap[d]||[]).map(h => ({ date: d, ...h })));
       html += renderLocation(loc, dateMap, sortedDates, i);
     });
 
-    html += `<div class="section-label">이후 예보 (일 단위)</div>`;
-    perLocData.forEach(({loc, daily, sortedDates})=>{
-      html += renderExtended(loc, daily, sortedDates);
-    });
+    const extendedHtml = perLocData.map(({loc, daily, sortedDates}) => renderExtended(loc, daily, sortedDates)).join('');
+    if(extendedHtml){
+      html += `<div class="section-label">이후 예보 (일 단위)</div>` + extendedHtml;
+    }
 
     contentEl.innerHTML = html;
     statusEl.classList.add('hidden');
@@ -1485,4 +1537,4 @@ if('serviceWorker' in navigator){
 
 </script>
 </body>
-</html>
+</html>
